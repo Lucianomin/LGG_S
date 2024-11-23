@@ -1,0 +1,365 @@
+//+------------------------------------------------------------------+
+//|                                                      ProjectName |
+//|                                      Copyright 2020, CompanyName |
+//|                                       http://www.companyname.net |
+//+------------------------------------------------------------------+
+#include <Trade/Trade.mqh>
+CTrade trade;
+//+------------------------------------------------------------------+
+//| Inputs                                                           |
+//+------------------------------------------------------------------+
+input group "----> General Inputs <----";
+input long InpMagicNumber=181105;//Magic Number
+
+#define KEY_X 88
+#define KEY_E 69
+#define KEY_H 72
+#define KEY_S 83
+
+ulong ticketnumber=-1;
+double Step_Level=150;
+double Price_Level=0;
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   trade.SetExpertMagicNumber(InpMagicNumber);
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   Open_Buy_Sell_Initial();
+   Open_Buy_Sell_Levels();
+   Open_Sell_Buy_Levels();
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Check_Open_Buy_Positions()
+  {
+   int cnt=0;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);//get ticket
+      ulong magicnumber=-1;
+      PositionGetInteger(POSITION_MAGIC,magicnumber);
+      if(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY)
+        {
+         if(InpMagicNumber==magicnumber)
+           {
+            cnt++;
+           }
+
+        }
+
+     }
+   return cnt;
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Check_Open_Sell_Positions()
+  {
+   int cnt=0;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);//get ticket
+      ulong magicnumber=-1;
+      PositionGetInteger(POSITION_MAGIC,magicnumber);
+      if(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_SELL)
+        {
+         if(InpMagicNumber==magicnumber)
+           {
+            cnt++;
+           }
+
+        }
+
+     }
+   return cnt;
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Check_Starting_Level()
+  {
+   double price=-1;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);//get ticket
+      ulong magicnumber=-1;
+      PositionGetInteger(POSITION_MAGIC,magicnumber);
+      if(ticket==ticketnumber)
+        {
+         if(PositionSelectByTicket(ticket))
+           {
+            if(InpMagicNumber==magicnumber)
+              {
+               price=PositionGetDouble(POSITION_PRICE_OPEN);
+              }
+           }
+        }
+     }
+   return price;
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void Open_Buy_Sell_Initial()
+  {
+   double ask=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+   double bid=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+
+   if(Check_Open_Buy_Positions()==0)
+     {
+      if(trade.Buy(0.01,NULL,ask,0,0,"BUY_0"))
+        {
+         ticketnumber=trade.ResultOrder();
+         Price_Level=NormalizeDouble(Check_Starting_Level(),_Digits);
+        }
+      else
+        {
+         Print("Can not open BUY_0");
+        }
+      if(Check_Open_Sell_Positions()==0)
+        {
+         if(!trade.Sell(0.01,NULL,bid,0,0,"SELL_0"))
+           {
+            Print("Can not open SELL_0");
+           }
+        }
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Determine_Volumes_Mediere(int number)
+  {
+   double lot = 0.01; // Default lot size
+   switch(number)
+     {
+      case 1:
+         lot = 0.01; // Lot size for case 1
+         break;
+
+      case 2:
+         lot = 0.02; // Lot size for case 2
+         break;
+      case 3:
+         lot = 0.03; // Lot size for case 1
+         break;
+
+      case 4:
+         lot = 0.06; // Lot size for case 2
+         break;
+      case 5:
+         lot = 0.09; // Lot size for case 2
+         break;
+      case 6:
+         lot = 0.18; // Lot size for case 1
+         break;
+
+      case 7:
+         lot = 0.30; // Lot size for case 2
+         break;
+      default:
+         lot=-1;
+         break;
+     }
+
+   return lot; // Assuming lot is what needs to be returned
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Determine_Volumes_Complementare()
+  {
+   double lot = 0.01; // Default lot size
+   switch(Check_Open_Buy_Positions())
+     {
+      case 1:
+         lot = 0.01; // Lot size for case 1
+         break;
+
+      case 2:
+         lot = 0.01; // Lot size for case 2
+         break;
+      case 3:
+         lot = 0.01; // Lot size for case 1
+         break;
+
+      case 4:
+         lot = 0.03; // Lot size for case 2
+         break;
+      case 5:
+         lot = 0.06; // Lot size for case 2
+         break;
+      case 6:
+         lot = 0.09; // Lot size for case 1
+         break;
+
+      case 7:
+         lot = 0.12; // Lot size for case 2
+         break;
+      default:
+         lot=-1;
+         break;
+     }
+
+   return lot; // Assuming lot is what needs to be returned
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Determine_Profit_Levels(int number)
+  {
+   double profit = 1; // Default lot size
+   switch(number)
+     {
+      case 1:
+         profit = 1; // profit size for case 1
+         break;
+
+      case 2:
+         profit = 2; // profit size for case 2
+         break;
+      case 3:
+         profit = 3; // profit size for case 1
+         break;
+
+      case 4:
+         profit = 4; // profit size for case 2
+         break;
+      case 5:
+         profit = 5; // profit size for case 2
+         break;
+      case 6:
+         profit = 6; // profit size for case 1
+         break;
+
+      case 7:
+         profit = 6; // profit size for case 2
+         break;
+      default:
+         profit=-1;
+         break;
+     }
+
+   return profit; // Assuming lot is what needs to be returned
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CloseAllPositions()
+  {
+   for(int i = PositionsTotal(); i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i); // Get the ticket number
+      // Select the position by index
+      if(PositionSelectByTicket(ticket))
+        {
+         // Get the magic number of the current position
+         ulong magicnumber = PositionGetInteger(POSITION_MAGIC);
+
+         // Check if the magic number matches the input magic number
+         if(magicnumber == InpMagicNumber)
+           {
+            trade.PositionClose(ticket); // Close the position
+           }
+        }
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void Open_Buy_Sell_Levels()
+  {
+   double ask=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+   double bid=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   Print(Price_Level);
+   if(ask<NormalizeDouble(Price_Level-180*_Point,_Digits))
+     {
+      if(trade.Buy(Determine_Volumes_Mediere(Check_Open_Buy_Positions()),NULL,ask,0,0,"BUYS"))
+        {
+         Price_Level=NormalizeDouble(Price_Level-Step_Level*_Point,_Digits);
+         Print(Price_Level);
+         /*if(!trade.Sell(Determine_Volumes_Complementare(),NULL,bid,0,0,"SELLS"))
+           {
+            Print("Can not open SELL_0");
+           }*/
+        }
+      else
+        {
+         Print("Can not open BUYS");
+        }
+     }
+   if(1<Determine_Account_Profit())
+     {
+      CloseAllPositions();
+     }
+  }
+void Open_Sell_Buy_Levels()
+  {
+   double ask=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+   double bid=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   Print(Price_Level);
+   if(bid>NormalizeDouble(Price_Level+180*_Point,_Digits))
+     {
+      if(trade.Sell(Determine_Volumes_Mediere(Check_Open_Sell_Positions()),NULL,bid,0,0,"SELLS"))
+        {
+         Price_Level=NormalizeDouble(Price_Level+Step_Level*_Point,_Digits);
+         Print(Price_Level);
+         /*if(!trade.Sell(Determine_Volumes_Complementare(),NULL,bid,0,0,"SELLS"))
+           {
+            Print("Can not open SELL_0");
+           }*/
+        }
+      else
+        {
+         Print("Can not open BUYS");
+        }
+     }
+   if(1<Determine_Account_Profit())
+     {
+      CloseAllPositions();
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Determine_Account_Profit()
+  {
+   double profit = 0.0;  // Initialize profit
+
+// Iterate over all open positions
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i); // Get ticket
+      if(PositionSelectByTicket(ticket))   // If position exists
+        {
+         ulong magicnumber = PositionGetInteger(POSITION_MAGIC); // Get magic number
+         if(InpMagicNumber == magicnumber)   // Compare with the input magic number
+           {
+            profit += PositionGetDouble(POSITION_PROFIT); // Accumulate profit
+           }
+        }
+     }
+   return profit; // Return the calculated profit
+  }
+
+
+//+------------------------------------------------------------------+
