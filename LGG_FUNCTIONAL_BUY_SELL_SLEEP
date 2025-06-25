@@ -1,0 +1,1399 @@
+//+------------------------------------------------------------------+
+//|                                                      ProjectName |
+//|                                      Copyright 2020, CompanyName |
+//|                                       http://www.companyname.net |
+//+------------------------------------------------------------------+
+#property description "Atentie alegere MaxDdrawdownLoss si Volume"
+#property description "1. H='Half'-acesta va inchide jumatate profit,cand o sa avem trailstop"
+#property description "2. M='Magic' -acesta va inchide toate pozitiile de pe magic number curent"
+#property description "3. X= 'Close Ea positions'- acesta va inchide toate pozitiile cu magic number ,indiferent de magic daca s-a schimbat si suntem la al n-le numar"
+#property description "4. Z='Close All'- acesta va inchide absolut toate pozitiile deschise,cu sau fara magic number,dar cu acelasi simbol"
+
+
+
+#include <ChartObjects\ChartObjectsTxtControls.mqh>
+#include <Trade/Trade.mqh>
+CTrade trade;
+//+------------------------------------------------------------------+
+//| Inputs                                                           |
+//+------------------------------------------------------------------+
+input group "----> General Inputs <----";
+input long InpMagicNumber=181105;//Magic Number
+input int InpMaxNoLacat=3;//Max Number Lacat
+input double InpLacatValue=60;//Value Lacat Acivation
+input int InpStartLevel=180;//Start Level
+input int InpStepLevel=60;//Step Level
+
+input group "----> Volumes Inputs <----";
+input double InpVol0=0.01;
+input bool InpVol1Use=true;
+input double InpVol1=0.01;
+
+input bool InpVol2Use=true;
+input double InpVol2=0.01;
+
+input bool InpVol3Use=true;
+input double InpVol3=0.02;
+
+input bool InpVol4Use=true;
+input double InpVol4=0.04;
+
+input bool InpVol5Use=true;
+input double InpVol5=0.06;
+
+input bool InpVol6Use=true;
+input double InpVol6=0.1;
+
+input bool InpVol7Use=true;
+input double InpVol7=0.1;
+
+input group "----> Profit Input <----";
+input bool InpUseComission=true;//Broker Use Comission
+input double InpComissionPerLor=15;//Comission Per Lot
+input double InpProfit=1;//Profit in dollars
+input group "----> Trailing Stop Loss<----";
+input double InpPriceStep=10;//Eightcap=1 // Winvestors=10
+input bool InpUseTrailingStopLoss=true;//Use Trailig Stop Loss
+input double InpMarja=50;//%Marja
+input double InpTrigger=1000;//Trigger
+input group "----> Input Sell(if Long) <----";
+input double InpVolumeSell=0.32;//Sell Volume from last BUY(lots)
+input int InpStepSell=200;//Sell Step from last BUY(pips)
+input group "----> Inputs ORDER X  <----";
+input double InpOrderXVolume=0.35;//Volume Order X (lots)
+input int InpOrderXStep=200;//Step ORDER X(pips)
+input bool InpIfHa=true;//Activeaza confirmarea HA False use
+input ENUM_TIMEFRAMES InpTimeFrameHa1=PERIOD_M1;//TimeFrame_1 HA
+input ENUM_TIMEFRAMES InpTimeFrameHa2=PERIOD_M2;//TimeFrame_2 HA
+input ENUM_TIMEFRAMES InpTimeFrameHa3=PERIOD_M3;//TimeFrame_3 HA
+input group "----> Time Filter 1<----";
+input int InpTimeStartHour = 15;// Start Hour
+input int InpTimeStartMin  = 29;//Start Minute
+input int InpTimeEndHour   = 20;//End Hour
+input int InpTimeEndMin    = 0;//End Minute
+
+input group "----> Time Filter 2<----";
+input bool InpSecondTimeFilter=true;//Second Time Filter(optional)
+input int InpTimeStartHour1 = 15;// Start Hour
+input int InpTimeStartMin1  = 29;//Start Minute
+input int InpTimeEndHour1   = 20;//End Hour
+input int InpTimeEndMin1    = 0;//End Minute
+#define KEY_H 72  // Half
+#define KEY_M 77  // Magic
+#define KEY_X 88  // Close EA positions
+#define KEY_Z 90  // Close All (cu același simbol)
+
+
+double SumBuy,SumSell,SumTotal;
+long InpMagicNumber_Copy=InpMagicNumber;
+int flag_lacat;
+ulong ticketnumber=-1;
+double Price_Level=0;
+int handleHeikenAshi_1,handleHeikenAshi_2,handleHeikenAshi_3,handleHeikenAshi_Start;
+int barsTotal_1,barsTotal_2,barsTotal_3,barsTotal_Start;
+string first_HA, second_HA, third_HA;
+int CONTOR;
+struct Flags_Heiken_Ashi
+  {
+   int               sell,buy;
+  };
+Flags_Heiken_Ashi  flag_HA_1,flag_HA_2,flag_HA_3;
+
+string lastType="BUY";
+
+double g_openBuyVolume = 0.0;
+double g_openSellVolume = 0.0;
+double g_lacat_profit,g_distance_lacat;
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+
+   flag_HA_1.buy=0;
+   flag_HA_1.sell=0;
+   flag_HA_2.buy=0;
+   flag_HA_2.sell=0;
+   flag_HA_3.buy=0;
+   flag_HA_3.sell=0;
+
+
+   barsTotal_1=iBars(_Symbol,InpTimeFrameHa1);
+   barsTotal_2=iBars(_Symbol,InpTimeFrameHa2);
+   barsTotal_3=iBars(_Symbol,InpTimeFrameHa3);
+
+
+   handleHeikenAshi_1= iCustom(_Symbol, InpTimeFrameHa1, "Examples\\Heiken_Ashi.ex5");
+   handleHeikenAshi_2= iCustom(_Symbol, InpTimeFrameHa2, "Examples\\Heiken_Ashi.ex5");
+   handleHeikenAshi_3= iCustom(_Symbol, InpTimeFrameHa3, "Examples\\Heiken_Ashi.ex5");
+
+   trade.SetExpertMagicNumber(InpMagicNumber_Copy); //Atentie daca vrem sa modificam Magic Number
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   string prefix = "HA_InfoPanel_";
+   ObjectDelete(0, prefix + "BG");
+   for(int i = 0; i < 7; i++)
+      ObjectDelete(0, prefix + "Text" + (string)i);
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+  {
+   if(id == CHARTEVENT_KEYDOWN)
+     {
+      int key = (int)lparam;
+      switch(key)
+        {
+         case KEY_H:
+            CloseHalfProfit((int)InpMagicNumber_Copy);
+
+            break;
+
+         case KEY_M:
+            CloseMagicPositions((int)InpMagicNumber_Copy);
+
+            break;
+
+         case KEY_X:
+            CloseAllEaPositions();
+            break;
+
+         case KEY_Z:
+            CloseAllSymbolPositions(Symbol());
+            break;
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CloseHalfProfit(int magic)
+  {
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      if(PositionGetTicket(i))
+        {
+         if(PositionGetInteger(POSITION_MAGIC) == magic)
+           {
+            double volume = NormalizeDouble(PositionGetDouble(POSITION_VOLUME)/2,2);
+            if(volume >= SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+              {
+               trade.PositionClosePartial(PositionGetInteger(POSITION_TICKET), volume);
+              }
+           }
+
+        }
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CloseMagicPositions(int magic)
+  {
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      if(PositionGetTicket(i))
+        {
+         if(PositionGetInteger(POSITION_MAGIC) == magic)
+           {
+            trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+           }
+        }
+     }
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CloseAllEaPositions()
+  {
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      if(PositionGetTicket(i))
+        {
+         if(PositionGetInteger(POSITION_MAGIC)!=0)
+           {
+            trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+           }
+
+        }
+     }
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CloseAllSymbolPositions(string symbol)
+  {
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      if(PositionGetTicket(i))
+        {
+         if(PositionGetString(POSITION_SYMBOL) == symbol)
+           {
+            trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+           }
+        }
+     }
+
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+
+   CountOpenVolumesByType(InpMagicNumber_Copy); // Replace with your desired magic number
+
+   DrawInfoPanel();
+
+//TIMEFILETR
+   datetime LocalTime=TimeLocal();
+
+   MqlDateTime DateTimeStructure;
+   TimeCurrent(DateTimeStructure);
+   DateTimeStructure.sec=0;
+   TimeToStruct(LocalTime,DateTimeStructure);
+
+   DateTimeStructure.hour=InpTimeStartHour;
+   DateTimeStructure.min=InpTimeStartMin;
+   datetime timeStart=StructToTime(DateTimeStructure);
+
+   DateTimeStructure.hour=InpTimeEndHour;
+   DateTimeStructure.min=InpTimeEndMin;
+   datetime timeEnd=StructToTime(DateTimeStructure);
+
+   DateTimeStructure.hour=InpTimeStartHour1;
+   DateTimeStructure.min=InpTimeStartMin1;
+   datetime timeStart2=StructToTime(DateTimeStructure);
+
+   DateTimeStructure.hour=InpTimeEndHour1;
+   DateTimeStructure.min=InpTimeEndMin1;
+   datetime timeEnd2=StructToTime(DateTimeStructure);
+   bool isTime = TimeCurrent() >timeStart && TimeCurrent() <timeEnd; //se afla in range
+   bool isTime2= TimeCurrent() >timeStart2 && TimeCurrent() <timeEnd2 && InpSecondTimeFilter==true;
+   if(isTime==true || isTime2==true)
+     {
+      if(Check_Activation_Lacat(Check_Open_Buy_Positions(),Check_Open_Sell_Positions())!=1)
+        {
+         if(Open_Buy_Sell_Initial(lastType)==1)
+           {
+            //Print("Level 0 find it!");
+           }
+         Open_Buy_Sell_Levels(lastType);
+         Activate_Sell_at_Step(Check_Open_Buy_Positions(),Check_Open_Sell_Positions(),lastType);
+         if(Activate_Order_x(Check_Open_Buy_Positions(),Check_Open_Sell_Positions(),lastType)==1)
+           {
+
+            EnterTrade(lastType);
+           }
+         if(Activate_Order_x(Check_Open_Buy_Positions(),Check_Open_Sell_Positions(),lastType)==2)
+           {
+            if(SymbolInfoDouble(_Symbol,SYMBOL_ASK)>NormalizeDouble(Price_Level+InpOrderXStep*_Point,_Digits))
+              {
+               if(trade.Buy(InpOrderXVolume,NULL,SymbolInfoDouble(_Symbol,SYMBOL_ASK),0,0,"ORDER X"))
+                 {
+                  Print("Order X - placed succesufly");
+                 }
+              }
+
+           }
+
+
+
+        }
+      else
+        {
+         Activate_Lacat_Sleep_Robot();
+         SetExpertMagic();
+        }
+     }
+   else
+      if(InpProfit<Determine_Account_Profit())
+        {
+         CloseAllPositions();
+        }
+      else
+         if((Check_Open_Buy_Positions()+Check_Open_Sell_Positions())!=0)
+           {
+            if(Check_Activation_Lacat(Check_Open_Buy_Positions(),Check_Open_Sell_Positions())!=1)
+              {
+               if(Open_Buy_Sell_Initial(lastType)==1)
+                 {
+                  // Print("Price Level find it!");
+                 }
+               Open_Buy_Sell_Levels(lastType);
+               Activate_Sell_at_Step(Check_Open_Buy_Positions(),Check_Open_Sell_Positions(),lastType);
+               if(Activate_Order_x(Check_Open_Buy_Positions(),Check_Open_Sell_Positions(),lastType)==1)
+                 {
+
+                  EnterTrade(lastType);
+                 }
+               if(Activate_Order_x(Check_Open_Buy_Positions(),Check_Open_Sell_Positions(),lastType)==2)
+                 {
+                  if(SymbolInfoDouble(_Symbol,SYMBOL_ASK)>NormalizeDouble(Price_Level+InpOrderXStep*_Point,_Digits))
+                    {
+                     if(trade.Buy(InpOrderXVolume,NULL,SymbolInfoDouble(_Symbol,SYMBOL_ASK),0,0,"ORDER X"))
+                       {
+                        Print("Order X - placed succesufly");
+                       }
+
+                    }
+                 }
+
+              }
+            else
+              {
+               Activate_Lacat_Sleep_Robot();
+               SetExpertMagic();
+              }
+           }
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+#include <ChartObjects\ChartObjectsTxtControls.mqh>
+
+// === SETĂRI ===
+#define PANEL_X      10
+#define PANEL_Y      20
+#define PANEL_WIDTH  200
+#define PANEL_HEIGHT 100
+#define FONT_SIZE    10
+#define TEXT_COLOR   clrBlue
+#define BG_COLOR     clrWhite
+#define BG_OPACITY   0 // între 0 și 255
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void DrawInfoPanel()
+  {
+// ---- Heiken Ashi Trend Check ----
+   double haOpen_1[], haClose_1[];
+   double haOpen_2[], haClose_2[];
+   double haOpen_3[], haClose_3[];
+
+   CopyBuffer(handleHeikenAshi_1,0,1,1,haOpen_1);
+   CopyBuffer(handleHeikenAshi_1,3,1,1,haClose_1);
+   CopyBuffer(handleHeikenAshi_2,0,1,1,haOpen_2);
+   CopyBuffer(handleHeikenAshi_2,3,1,1,haClose_2);
+   CopyBuffer(handleHeikenAshi_3,0,1,1,haOpen_3);
+   CopyBuffer(handleHeikenAshi_3,3,1,1,haClose_3);
+
+
+   if(haClose_1[0] > haOpen_1[0])
+      first_HA="BUY";
+   else
+      if(haClose_1[0] < haOpen_1[0])
+         first_HA="SELL";
+
+
+   if(haClose_2[0] > haOpen_2[0])
+      second_HA="BUY";
+   else
+      if(haClose_2[0] < haOpen_2[0])
+         second_HA="SELL";
+
+
+
+   if(haClose_3[0] > haOpen_3[0])
+      third_HA="BUY";
+   else
+      if(haClose_3[0] < haOpen_3[0])
+         third_HA="SELL";
+
+
+
+   string prefix = "HA_InfoPanel_";
+
+// Șterge obiectele existente
+   ObjectDelete(0, prefix + "BG");
+   for(int i = 0; i < 8; i++)
+      ObjectDelete(0, prefix + "Text" + (string)i);
+
+// ===== Fundal =====
+   if(!ObjectCreate(0, prefix + "BG", OBJ_RECTANGLE_LABEL, 0, 0, 0))
+     {
+      Print("Eroare la crearea fundalului: ", GetLastError());
+      return;
+     }
+
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_CORNER, CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_XDISTANCE, 220);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_YDISTANCE, PANEL_Y+10);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_XSIZE, PANEL_WIDTH+10);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_YSIZE, PANEL_HEIGHT+20);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_COLOR, BG_COLOR);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_STYLE, STYLE_SOLID);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_BACK, false);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_HIDDEN, true);
+// Asta creează o culoare cu transparență alpha (0 = complet transparent, 255 = opac)
+//uint bg_with_alpha = ColorToARGB(BG_COLOR, BG_OPACITY);
+//ObjectSetInteger(0, prefix + "BG", OBJPROP_COLOR, bg_with_alpha);
+
+
+// ===== Texte =====
+   string lines[] =
+     {
+      "M NR: " + (string)InpMagicNumber_Copy,
+      "P&L Magic Number: " + (string)NormalizeDouble(Determine_Account_Profit(),2),
+      "Loturi BUY: " + DoubleToString(g_openBuyVolume, 2),
+      "Loturi SELL: " + DoubleToString(g_openSellVolume, 2),
+      "Total Loturi: " + DoubleToString(g_openBuyVolume + g_openSellVolume, 2),
+      EnumToString(InpTimeFrameHa1) + ":" + first_HA,
+      EnumToString(InpTimeFrameHa2) + ":" + second_HA,
+      EnumToString(InpTimeFrameHa3) + ":" + third_HA
+
+     };
+
+   for(int i = 0; i < ArraySize(lines); i++)
+     {
+      string obj_name = prefix + "Text" + (string)i;
+
+      if(!ObjectCreate(0, obj_name, OBJ_LABEL, 0, 0, 0))
+        {
+         Print("Eroare la textul ", i, ": ", GetLastError());
+         continue;
+        }
+
+      ObjectSetInteger(0, obj_name, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, 220);
+      ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, PANEL_Y + 10 + i * 15);
+      ObjectSetInteger(0, obj_name, OBJPROP_FONTSIZE, FONT_SIZE);
+      ObjectSetInteger(0, obj_name, OBJPROP_COLOR, TEXT_COLOR);
+      ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+      ObjectSetString(0, obj_name, OBJPROP_TEXT, lines[i]);
+     }
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void SetExpertMagic()
+  {
+   trade.SetExpertMagicNumber(InpMagicNumber_Copy);
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Check_Open_Buy_Positions()
+  {
+   int cnt=0;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);//get ticket
+      ulong magicnumber=-1;
+      magicnumber=PositionGetInteger(POSITION_MAGIC);
+      if(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY)
+        {
+         if(InpMagicNumber_Copy==magicnumber)
+           {
+            cnt++;
+           }
+
+        }
+
+     }
+   return cnt;
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Check_Open_Sell_Positions()
+  {
+   int cnt=0;
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);//get ticket
+      ulong magicnumber=-1;
+      magicnumber=PositionGetInteger(POSITION_MAGIC);
+      if(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_SELL)
+        {
+         if(InpMagicNumber_Copy==magicnumber)
+           {
+            cnt++;
+           }
+
+        }
+
+     }
+   return cnt;
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Check_Starting_Level()
+  {
+   double price=-1;
+   for(int i=PositionsTotal(); i>=0; i--)
+     {
+      ulong ticket=PositionGetTicket(i);//get ticket
+      ulong magicnumber=-1;
+      magicnumber=PositionGetInteger(POSITION_MAGIC);
+
+      if(ticket==ticketnumber)
+        {
+         if(PositionSelectByTicket(ticket))
+           {
+            if(InpMagicNumber_Copy==magicnumber)
+              {
+               price=PositionGetDouble(POSITION_PRICE_OPEN);
+              }
+           }
+        }
+
+
+     }
+   return price;
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Open_Buy_Sell_Initial(string last_pos)
+  {
+   double ask = NormalizeDouble(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits);
+   double bid = NormalizeDouble(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits);
+
+// ---- Heiken Ashi Trend Check ----
+   double haOpen_1[], haClose_1[];
+   double haOpen_2[], haClose_2[];
+   double haOpen_3[], haClose_3[];
+
+   int bullish = 0, bearish = 0;
+
+
+   CopyBuffer(handleHeikenAshi_1,0,1,1,haOpen_1);
+   CopyBuffer(handleHeikenAshi_1,3,1,1,haClose_1);
+   CopyBuffer(handleHeikenAshi_2,0,1,1,haOpen_2);
+   CopyBuffer(handleHeikenAshi_2,3,1,1,haClose_2);
+   CopyBuffer(handleHeikenAshi_3,0,1,1,haOpen_3);
+   CopyBuffer(handleHeikenAshi_3,3,1,1,haClose_3);
+
+// Trend determination
+
+
+   if(haClose_1[0] > haOpen_1[0])
+      bullish++;
+   else
+      if(haClose_1[0] < haOpen_1[0])
+         bearish++;
+
+
+   if(haClose_2[0] > haOpen_2[0])
+      bullish++;
+   else
+      if(haClose_2[0] < haOpen_2[0])
+         bearish++;
+
+
+
+   if(haClose_3[0] > haOpen_3[0])
+      bullish++;
+   else
+      if(haClose_3[0] < haOpen_3[0])
+         bearish++;
+
+//Print("BULLSIH ",bullish,"BEARISH ",bearish);
+// ---- BUY condition ----
+   if(bullish >= 2 && Check_Open_Buy_Positions() == 0 && Check_Open_Sell_Positions() == 0)
+     {
+      if(trade.Buy(InpVol0, NULL, ask, 0, 0, "BUY_0"))
+        {
+         Print("Activate BULLISH");
+         ticketnumber = trade.ResultOrder();
+         SumBuy = InpVol0;
+         SumSell = 0;
+         bullish=0;
+         CONTOR=1;
+         Sleep(500);
+        }
+     }
+
+// ---- SELL condition ----
+   if(bearish >= 2 && Check_Open_Sell_Positions() == 0 && Check_Open_Buy_Positions() == 0)
+     {
+      if(trade.Sell(InpVol0, NULL, bid, 0, 0, "SELL_0"))
+        {
+         Print("Activate BEARISH");
+         ticketnumber = trade.ResultOrder();
+         SumSell = InpVol0;
+         SumBuy = 0;
+         bearish=0;
+         CONTOR=1;
+         Sleep(500);
+        }
+     }
+
+
+   if(Check_Open_Buy_Positions() == 1 && Check_Open_Sell_Positions() == 0)
+     {
+      Price_Level = NormalizeDouble(Check_Starting_Level(), _Digits);
+      if(Price_Level!=0)
+         return 1;
+     }
+   else
+      if(Check_Open_Buy_Positions() == 0 && Check_Open_Sell_Positions() == 1)
+        {
+         Price_Level = NormalizeDouble(Check_Starting_Level(), _Digits);
+         if(Price_Level!=0)
+            return 1;
+        }
+   return 0;
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+double Determine_Volumes_Mediere(int number)
+  {
+   double lot = InpVol0; // Default lot size
+   switch(number)
+     {
+      case 0:
+         lot = InpVol0; // Lot size for case 1
+         break;
+      case 1:
+         lot = InpVol1; // Lot size for case 1
+         break;
+
+      case 2:
+         lot = InpVol2; // Lot size for case 2
+         break;
+      case 3:
+         lot = InpVol3; // Lot size for case 1
+         break;
+
+      case 4:
+         lot = InpVol4; // Lot size for case 2
+         break;
+      case 5:
+         lot = InpVol5; // Lot size for case 2
+         break;
+      case 6:
+         lot = InpVol6; // Lot size for case 1
+         break;
+
+      case 7:
+         lot = InpVol7; // Lot size for case 2
+         break;
+      default:
+         lot=0;
+         break;
+     }
+
+   return lot; // Assuming lot is what needs to be returned
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CloseAllPositions()
+  {
+   for(int i = PositionsTotal(); i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+        {
+         ulong magicnumber = PositionGetInteger(POSITION_MAGIC);
+         if(magicnumber == InpMagicNumber_Copy)
+           {
+            trade.PositionClose(ticket);
+           }
+        }
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Open_This_Position_Level(int number_pos)
+  {
+   switch(number_pos)
+     {
+      case 1:
+         if(InpVol1Use)
+            return 1;
+         break;
+      case 2:
+         if(InpVol2Use)
+            return 1;
+         break;
+      case 3:
+         if(InpVol3Use)
+            return 1;
+         break;
+      case 4:
+         if(InpVol4Use)
+            return 1;
+         break;
+      case 5:
+         if(InpVol5Use)
+            return 1;
+         break;
+      case 6:
+         if(InpVol6Use)
+            return 1;
+         break;
+      case 7:
+         if(InpVol7Use)
+            return 1;
+         break;
+     }
+
+   return 0;  // Skip level if not used or out of defined range
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int CountEnabledVolumeLevels()
+  {
+   int count = 0;
+
+   if(InpVol1Use)
+      count++;
+   if(InpVol2Use)
+      count++;
+   if(InpVol3Use)
+      count++;
+   if(InpVol4Use)
+      count++;
+   if(InpVol5Use)
+      count++;
+   if(InpVol6Use)
+      count++;
+   if(InpVol7Use)
+      count++;
+
+   return count;
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void Open_Buy_Sell_Levels(string last_pos)
+  {
+   double ask = NormalizeDouble(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits);
+   double bid = NormalizeDouble(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits);
+
+   if(Check_Open_Sell_Positions() == 0)
+     {
+      if(ask < NormalizeDouble(Price_Level - InpStartLevel * _Point, _Digits))
+        {
+         bool shouldOpen = Open_This_Position_Level(CONTOR);
+         double lot = Determine_Volumes_Mediere(CONTOR);
+
+         if(shouldOpen)
+           {
+            if(trade.Buy(lot, NULL, ask, 0, 0, "BUY_" + (string)Check_Open_Buy_Positions()))
+              {
+               //Price_Level = NormalizeDouble(Price_Level - InpStepLevel * _Point, _Digits);
+               SumBuy += lot;
+               Print("Price_Level: ",Price_Level);
+               Sleep(500);
+              }
+            else
+              {
+               // trade failed, still skip level
+              }
+           }
+
+         // advance price level and CONTOR regardless
+         if(!shouldOpen)
+            Print("Level ", CONTOR, " disabled. Skipping.");
+         Price_Level = NormalizeDouble(Price_Level - InpStepLevel * _Point, _Digits);
+         CONTOR++;
+        }
+     }
+   else
+      if(Check_Open_Buy_Positions() == 0)
+        {
+         if(bid > NormalizeDouble(Price_Level + InpStartLevel * _Point, _Digits))
+           {
+            bool shouldOpen = Open_This_Position_Level(CONTOR);
+            double lot = Determine_Volumes_Mediere(CONTOR);
+
+            if(shouldOpen)
+              {
+               if(trade.Sell(lot, NULL, bid, 0, 0, "SELL_" + (string)Check_Open_Sell_Positions()))
+                 {
+                  //Price_Level = NormalizeDouble(Price_Level + InpStepLevel * _Point, _Digits);
+                  SumSell += lot;
+                  Print("Price_level: ",Price_Level);
+                  Sleep(500);
+                 }
+               else
+                 {
+                  // trade failed, still skip level
+                 }
+              }
+
+            // advance price level and CONTOR regardless
+            if(!shouldOpen)
+               Print("Level ", CONTOR, " disabled. Skipping.");
+            Price_Level = NormalizeDouble(Price_Level + InpStepLevel * _Point, _Digits);
+            CONTOR++;
+           }
+        }
+
+   ulong ticket_trail = Find_Position_At_Step_Ticket();
+
+   if(InpUseTrailingStopLoss && Find_Position_Order_X_Ticket()==0)
+     {
+      ApplyTrailingStopLossWithExit(ticket_trail, g_distance_lacat + InpMarja * g_distance_lacat / 100, InpMarja * g_distance_lacat / 100 );
+      //Print("Ticket trail: ",ticket_trail);
+     }
+
+// Only close all positions if trailing is OFF or not active
+   if(!PositionSelectByTicket(ticket_trail))
+     {
+      if(InpProfit < Determine_Account_Profit())
+        {
+         CloseAllPositions();
+        }
+     }
+
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+ulong Find_Position_Order_X_Ticket()
+  {
+   for(int i=0; i<PositionsTotal(); i++)
+     {
+      if(PositionGetSymbol(i)==_Symbol)
+        {
+         ulong ticket = PositionGetTicket(i);
+
+         if(PositionSelectByTicket(ticket))
+           {
+            if(PositionGetString(POSITION_COMMENT) == "ORDER X" &&
+               PositionGetInteger(POSITION_MAGIC) == InpMagicNumber_Copy)
+              {
+               return ticket;
+              }
+           }
+        }
+     }
+
+   return 0; // 0 = invalid ticket
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+ulong Find_Position_At_Step_Ticket()
+  {
+   for(int i=0; i<PositionsTotal(); i++)
+     {
+      if(PositionGetSymbol(i)==_Symbol)
+        {
+         ulong ticket = PositionGetTicket(i);
+
+         if(PositionSelectByTicket(ticket))
+           {
+            if(PositionGetString(POSITION_COMMENT) == "Position at Step" &&
+               PositionGetInteger(POSITION_MAGIC) == InpMagicNumber_Copy)
+              {
+               return ticket;
+              }
+           }
+        }
+     }
+
+   return 0; // 0 = invalid ticket
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void UpdateSL(ulong ticket, double new_sl)
+  {
+   if(PositionSelectByTicket(ticket))
+     {
+      double current_sl = PositionGetDouble(POSITION_SL);
+      if(current_sl != new_sl) // Only update if SL is different
+        {
+         if(trade.PositionModify(ticket, new_sl, PositionGetDouble(POSITION_TP)))
+            Print("✅ SL updated to ", DoubleToString(new_sl, _Digits));
+         else
+            Print("❌ Failed to update SL. Error: ", GetLastError());
+        }
+     }
+  }
+//+------------------------------------------------------------------+
+double Determine_Account_Profit()
+  {
+   double profit = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+        {
+         ulong magicnumber = PositionGetInteger(POSITION_MAGIC);
+         if(InpMagicNumber_Copy == magicnumber)
+           {
+            profit += PositionGetDouble(POSITION_PROFIT);
+           }
+        }
+     }
+   return profit;
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void Activate_Sell_at_Step(int NumarBuysOpen, int NumarSellsOpen, string last_pos)
+  {
+   double bid=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   double ask=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+
+   if(NumarBuysOpen==CountEnabledVolumeLevels()+1 && NumarSellsOpen==0)
+     {
+      //Print("Price_Levele before SELL: ", Price_Level);
+      if(bid<NormalizeDouble(Price_Level-(InpStartLevel-InpStepLevel+InpStepSell)*_Point,_Digits))
+        {
+         if(trade.Sell(SumBuy,NULL,bid,0,0,"LACAT Sell at Step"))
+           {
+            g_lacat_profit=Determine_Account_Profit();
+            Print("Lacat Distance: ",MathAbs(g_lacat_profit)/SumBuy*InpPriceStep);
+            g_distance_lacat=MathAbs(g_lacat_profit)/SumBuy*InpPriceStep;
+            SumSell+=SumBuy;
+           }
+         if(trade.Sell(InpVolumeSell,NULL,bid,0,0,"Position at Step"))
+           {
+            Price_Level=NormalizeDouble(Price_Level-(InpStartLevel-InpStepLevel+InpStepSell)*_Point,_Digits);
+            Print("Corect Open pos: ", Price_Level);
+            SumSell+=InpVolumeSell;
+            CONTOR=0;
+           }
+        }
+     }
+
+   if(NumarBuysOpen==0 && NumarSellsOpen==CountEnabledVolumeLevels()+1)
+     {
+      //Print("Price_levels before BUY: ",Price_Level);
+      if(ask>NormalizeDouble(Price_Level+(InpStartLevel-InpStepLevel+InpStepSell)*_Point,_Digits))
+        {
+         if(trade.Buy(SumSell,NULL,ask,0,0,"LACAT Buy at Step"))
+           {
+            g_lacat_profit=Determine_Account_Profit();
+            Print("Lacat Distance: ",MathAbs(g_lacat_profit)/SumSell*InpPriceStep);
+            g_distance_lacat=MathAbs(g_lacat_profit)/SumSell*InpPriceStep;
+            SumBuy+=SumSell;
+           }
+         if(trade.Buy(InpVolumeSell,NULL,ask,0,0,"Position at Step"))
+           {
+            Price_Level=NormalizeDouble(Price_Level+(InpStartLevel-InpStepLevel+InpStepSell)*_Point,_Digits);
+            Print("Corect open pos: ",Price_Level);
+            SumBuy+=InpVolumeSell;
+            CONTOR=0;
+           }
+        }
+     }
+
+
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Activate_Order_x(int NumarBuysOpen, int NumarSellsOpen, string last_pos)
+  {
+   if(InpIfHa==true)
+     {
+      if(NumarBuysOpen==CountEnabledVolumeLevels()+1 && NumarSellsOpen==2)
+        {return 1;}
+      else
+         if(NumarSellsOpen==CountEnabledVolumeLevels()+1 && NumarBuysOpen==2)
+           {
+            return 1;
+           }
+
+
+     }
+   else
+     {
+
+      if(NumarBuysOpen==CountEnabledVolumeLevels()+1 && NumarSellsOpen==2)
+         return 2;
+      else
+         if(NumarSellsOpen==CountEnabledVolumeLevels()+1 && NumarBuysOpen==2)
+           {
+            return 2;
+           }
+
+
+     }
+   return 0;
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void EnterTrade(string last_pos)
+  {
+   double ask=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+   double bid=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+
+   int bars_1=iBars(_Symbol,InpTimeFrameHa1);
+   int bars_2=iBars(_Symbol,InpTimeFrameHa2);
+   int bars_3=iBars(_Symbol,InpTimeFrameHa3);
+
+
+   if(barsTotal_1!=bars_1)
+     {
+      barsTotal_1=bars_1;
+
+      double haOpen_1[], haClose_1[];
+
+      CopyBuffer(handleHeikenAshi_1,0,1,1,haOpen_1);
+      CopyBuffer(handleHeikenAshi_1,3,1,1,haClose_1);
+
+      if(haOpen_1[0]<haClose_1[0])
+        {
+         flag_HA_1.buy=1;
+         first_HA = "BUY";
+         flag_HA_1.sell=0;
+        }
+      else
+         if(haOpen_1[0]>haClose_1[0])
+           {
+            flag_HA_1.sell=1;
+            first_HA = "SELL";
+            flag_HA_1.buy=0;
+           }
+
+     }
+   if(barsTotal_2!=bars_2)
+     {
+      barsTotal_2=bars_2;
+
+      double haOpen_2[], haClose_2[];
+
+      CopyBuffer(handleHeikenAshi_2,0,1,1,haOpen_2);
+      CopyBuffer(handleHeikenAshi_2,3,1,1,haClose_2);
+
+      if(haOpen_2[0]<haClose_2[0])
+        {
+         flag_HA_2.buy=1;
+         second_HA="BUY";
+         flag_HA_2.sell=0;
+        }
+      else
+         if(haOpen_2[0]>haClose_2[0])
+           {
+            flag_HA_2.sell=1;
+            second_HA="SELL";
+            flag_HA_2.buy=0;
+           }
+
+     }
+   if(barsTotal_3!=bars_3)
+     {
+      barsTotal_3=bars_3;
+
+      double haOpen_3[], haClose_3[];
+
+      CopyBuffer(handleHeikenAshi_3,0,1,1,haOpen_3);
+      CopyBuffer(handleHeikenAshi_3,3,1,1,haClose_3);
+
+      if(haOpen_3[0]<haClose_3[0])
+        {
+         flag_HA_3.buy=1;
+         third_HA="BUY";
+         flag_HA_3.sell=0;
+        }
+      else
+         if(haOpen_3[0]>haClose_3[0])
+           {
+            flag_HA_3.sell=1;
+            third_HA="SELL";
+            flag_HA_3.buy=0;
+           }
+     }
+//verfify all HA
+//Print("ORDER X");
+   if((flag_HA_1.buy==1 && flag_HA_2.buy==1) || (flag_HA_2.buy==1 && flag_HA_3.buy==1) || (flag_HA_1.buy==1 && flag_HA_3.buy==1) ||
+      (flag_HA_1.buy==1 && flag_HA_2.buy==1 && flag_HA_3.buy==1))
+     {
+      //Print("ORDER X");
+      if(Check_Open_Buy_Positions()>Check_Open_Sell_Positions())
+        {
+         if(SymbolInfoDouble(_Symbol,SYMBOL_ASK)>NormalizeDouble(Price_Level+InpOrderXStep*_Point,_Digits))
+           {
+            if(trade.Buy(InpVolumeSell,NULL,ask,0,0,"ORDER X"))
+              {
+
+               SumBuy+=InpVolumeSell;
+              }
+            if(trade.Buy(InpVolumeSell,NULL,ask,0,0,"ORDER X"))
+              {
+
+               SumBuy+=InpVolumeSell;
+               flag_HA_1.buy=0;
+               flag_HA_2.buy=0;
+               flag_HA_3.buy=0;
+
+              }
+           }
+        }
+      else
+         if(SymbolInfoDouble(_Symbol,SYMBOL_ASK)<NormalizeDouble(Price_Level-InpOrderXStep*_Point,_Digits))
+           {
+            if(trade.Buy(InpVolumeSell,NULL,ask,0,0,"ORDER X"))
+              {
+
+               SumBuy+=InpVolumeSell;
+              }
+            if(trade.Buy(InpOrderXVolume,NULL,ask,0,0,"ORDER X"))
+              {
+
+               SumBuy+=InpOrderXVolume;
+               flag_HA_1.buy=0;
+               flag_HA_2.buy=0;
+               flag_HA_3.buy=0;
+
+              }
+           }
+
+     }
+   if((flag_HA_1.sell==1 && flag_HA_2.sell==1) || (flag_HA_2.sell==1 && flag_HA_3.sell==1) || (flag_HA_1.sell==1 && flag_HA_3.sell==1) ||
+      (flag_HA_1.sell==1 && flag_HA_2.sell==1 && flag_HA_3.sell==1))
+     {
+      if(Check_Open_Buy_Positions()>Check_Open_Sell_Positions())
+        {
+         if(SymbolInfoDouble(_Symbol,SYMBOL_BID)>NormalizeDouble(Price_Level+InpOrderXStep*_Point,_Digits))
+           {
+            if(trade.Sell(InpVolumeSell,NULL,bid,0,0,"LACAT ORDER X"))
+              {
+               SumSell+=InpVolumeSell;
+
+              }
+            if(trade.Sell(InpOrderXVolume,NULL,bid,0,0,"ORDER X"))
+              {
+               SumSell+=InpOrderXVolume;
+               flag_HA_1.sell=0;
+               flag_HA_2.sell=0;
+               flag_HA_3.sell=0;
+
+              }
+           }
+        }
+
+      else
+         if(SymbolInfoDouble(_Symbol,SYMBOL_BID)<NormalizeDouble(Price_Level-InpOrderXStep*_Point,_Digits))
+           {
+            if(trade.Sell(InpOrderXVolume,NULL,bid,0,0,"LACAT ORDER X"))
+              {
+               SumSell+=InpOrderXVolume;
+
+              }
+            if(trade.Sell(InpOrderXVolume,NULL,bid,0,0,"ORDER X"))
+              {
+               SumSell+=InpOrderXVolume;
+               flag_HA_1.sell=0;
+               flag_HA_2.sell=0;
+               flag_HA_3.sell=0;
+
+              }
+           }
+
+
+     }
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int Check_Activation_Lacat(int nrS, int nrB)
+  {
+   int status=-1;
+   if(nrB==0 && nrS==0)
+     {
+      flag_lacat=0;
+      status=0;
+     }
+   if(Determine_Account_Profit()<(-1)*InpLacatValue)
+     {
+      status=1;
+     }
+   return status;
+  }
+//+------------------------------------------------------------------+
+//| Count open BUY and SELL volumes into global variables           |
+//+------------------------------------------------------------------+
+void CountOpenVolumesByType(long magicNumber = -1)
+  {
+   g_openBuyVolume = 0.0;
+   g_openSellVolume = 0.0;
+
+   int totalPositions = PositionsTotal();
+
+   for(int i = 0; i < totalPositions; i++)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+        {
+         long posMagic = PositionGetInteger(POSITION_MAGIC);
+
+         // If magicNumber is -1, we include all positions
+         if(magicNumber == -1 || posMagic == magicNumber)
+           {
+            double volume = PositionGetDouble(POSITION_VOLUME);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+            if(type == POSITION_TYPE_BUY)
+               g_openBuyVolume += volume;
+            else
+               if(type == POSITION_TYPE_SELL)
+                  g_openSellVolume += volume;
+           }
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void Activate_Lacat_Sleep_Robot()
+  {
+   double ask=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+   double bid=NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   double SumLot=0.0;
+   SumLot=NormalizeDouble(MathAbs(g_openBuyVolume-g_openSellVolume),2);
+   if(g_openBuyVolume-g_openSellVolume<0)
+     {
+      if(trade.Buy(SumLot,NULL,ask,0,0,"LACAT"))
+        {
+         SumBuy+=SumLot;
+         SendNotification("Lacat Deschis-Robot Sleep");
+         flag_lacat=1;
+
+         if(InpMagicNumber_Copy-InpMagicNumber<=(InpMaxNoLacat-1))
+            InpMagicNumber_Copy++;
+        }
+     }
+   else
+      if(g_openBuyVolume-g_openSellVolume>0)
+        {
+         if(trade.Sell(SumLot,NULL,bid,0,0,"LACAT"))
+           {
+            SumSell+=SumLot;
+            SendNotification("Lacat Deschis-Robot Sleep");
+            flag_lacat=1;
+
+            if(InpMagicNumber_Copy-InpMagicNumber<(InpMaxNoLacat-1))
+               InpMagicNumber_Copy++;
+
+           }
+        }
+
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void CheckTrail()
+  {
+   if(TimeCurrent() >= D'2025.08.01 00:00:00')
+     {
+      if(PositionsTotal() == 0)
+        {
+         for(int i = ObjectsTotal(0)-1; i >= 0; i--)
+           {
+            string name = ObjectName(0,i);
+            if(StringFind(name, "GTs_") != -1)
+              {
+               ObjectDelete(0,name);
+              }
+           }
+         ExpertRemove();
+        }
+     }
+  }
+
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+void ApplyTrailingStopLossWithExit(ulong ticket, double startStepPips, double trailingDistancePips)
+  {
+   static bool trailWasActive = false; // Flag to track if trailing ever started
+
+   if(!PositionSelectByTicket(ticket))
+     {
+      // Only close others if trailing was active before and this ticket is now gone
+      if(trailWasActive)
+        {
+         Print("❗ Trailing SL HIT (ticket closed). Closing all positions with magic.");
+         CloseAllPositions(); // Or CloseAllPositionsByMagic(_Symbol, InpMagicNumber_Copy);
+         trailWasActive = false; // Reset for next run
+        }
+      else
+        {
+         Print("❌ Ticket ", ticket, " not found. Trailing not started.");
+        }
+      return;
+     }
+
+   string sym = PositionGetString(POSITION_SYMBOL);
+   long magic = PositionGetInteger(POSITION_MAGIC);
+   double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double currentSL = PositionGetDouble(POSITION_SL);
+   int type = (int)PositionGetInteger(POSITION_TYPE);
+
+   double pointValue = _Point;
+   double startStep = startStepPips * pointValue;
+   double trailDistance = trailingDistancePips * pointValue;
+
+   double price = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(sym, SYMBOL_BID)
+                  : SymbolInfoDouble(sym, SYMBOL_ASK);
+
+   double distanceMoved = (type == POSITION_TYPE_BUY) ? price - entryPrice
+                          : entryPrice - price;
+
+// Check if movement exceeds start threshold
+   if(distanceMoved >= startStep)
+     {
+      trailWasActive = true; // Activate flag since trailing is now in play
+
+      double newSL = (type == POSITION_TYPE_BUY) ? price - trailDistance
+                     : price + trailDistance;
+      newSL = NormalizeDouble(newSL, _Digits);
+
+      // Only update SL if it improves
+      if((type == POSITION_TYPE_BUY && (currentSL == 0 || newSL > currentSL)) ||
+         (type == POSITION_TYPE_SELL && (currentSL == 0 || newSL < currentSL)))
+        {
+         if(trade.PositionModify(ticket, newSL, PositionGetDouble(POSITION_TP)))
+            Print("✅ Trailing SL updated to: ", DoubleToString(newSL, _Digits));
+         else
+            Print("❌ Failed to update SL. Error: ", GetLastError());
+        }
+     }
+  }
+
+
+//+------------------------------------------------------------------+
